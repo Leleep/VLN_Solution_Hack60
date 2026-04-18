@@ -1,62 +1,27 @@
 {
-  "total_waypoints": 8,
-  "successful": 8,
+  "total_waypoints": 3,
+  "successful": 3,
   "failed": 0,
-  "elapsed_seconds": 103.59728980064392,
+  "elapsed_seconds": 53.03908658027649,
   "results": [
     {
       "node_id": 0,
-      "x": -1.2511408966227278,
-      "y": -0.4533166995519119,
+      "x": -1.7046786249224524,
+      "y": -0.15557870110679695,
       "success": true,
       "is_landmark": false
     },
     {
-      "node_id": 1,
-      "x": 0.34715112204329324,
-      "y": -0.1695408305729053,
-      "success": true,
-      "is_landmark": false
-    },
-    {
-      "node_id": 2,
-      "x": 1.8172143264471445,
-      "y": -0.33081545550289665,
-      "success": true,
-      "is_landmark": false
-    },
-    {
-      "node_id": 15,
-      "x": 3.655339389534044,
-      "y": -0.5593595877717372,
-      "success": true,
-      "is_landmark": false
-    },
-    {
-      "node_id": 8,
-      "x": 6.330417927807575,
-      "y": -1.3498355130611597,
+      "node_id": 44,
+      "x": -3.7606727481593305,
+      "y": 1.375719976081669,
       "success": true,
       "is_landmark": true
     },
     {
-      "node_id": 8,
-      "x": 6.330417927807575,
-      "y": -1.3498355130611597,
-      "success": true,
-      "is_landmark": true
-    },
-    {
-      "node_id": 9,
-      "x": 7.297072758013269,
-      "y": -2.3688103514596115,
-      "success": true,
-      "is_landmark": true
-    },
-    {
-      "node_id": 9,
-      "x": 7.297072758013269,
-      "y": -2.3688103514596115,
+      "node_id": 44,
+      "x": -3.7606727481593305,
+      "y": 1.375719976081669,
       "success": true,
       "is_landmark": true
     }

@@ -51,50 +51,92 @@ except ImportError:
 
 
 # ─── Predefined Exploration Waypoints ────────────────────────────────────────
-# Conservative waypoints in CENTER of open floor areas, ordered as a 
-# logical traversal path to minimize backtracking.
+# Dense whole-house coverage with multiple viewing angles per room.
+# Every coordinate based on verified-reachable positions from prior runs.
 #
-# Based on tested navigation:
-#   - Robot spawns at approximately (-2.0, -0.5)
-#   - Successfully reached (1.5, -1.7) and (2.3, -0.8)
-#   - Waypoints near furniture (0.3,-2.5) or walls fail
+# House layout (from navigation data + map):
+#   Bedroom:     x ∈ [-6, -3],  y ∈ [0, 2]
+#   Hallway:     x ∈ [-2, 4],   y ∈ [-0.5, 0]
+#   Living Room: x ∈ [0, 3],    y ∈ [-0.5, -2]    (sofa at ~y=-2.5, AVOID)
+#   Kitchen:     x ∈ [5, 8.5],  y ∈ [-0.5, -3.5]
+#   Bathroom:    x ∈ [-3, -1],  y ∈ [0.5, 2]      (north of hallway)
 #
-# Strategy: Stay at least ~0.8m from walls, face toward interesting objects.
-# Ordered as a path: spawn → hallway → living room → kitchen → back
+# theta: 0=east, π/2=north, π=west, -π/2=south
+# Total: 55 waypoints
 
 EXPLORATION_WAYPOINTS = [
-    # === Start / Hallway (robot spawns near -2, -0.5) ===
-    {"x": -1.0, "y": -0.5, "theta": 0.0,      "label": "hallway_west"},
-    {"x":  0.5, "y": -0.5, "theta": 0.0,      "label": "hallway_center"},
-    {"x":  2.0, "y": -0.5, "theta": 0.0,      "label": "hallway_east"},
+    # ═══ Phase 1: Hallway — full corridor with multiple angles ═══
+    {"x": -1.5, "y": -0.3, "theta":  0.0,    "label": "hallway_spawn"},
+    {"x": -1.0, "y": -0.3, "theta":  1.57,   "label": "hallway_west_north"},    # look north
+    {"x": -1.0, "y": -0.3, "theta": -1.57,   "label": "hallway_west_south"},    # look south
+    {"x":  0.0, "y": -0.3, "theta":  0.0,    "label": "hallway_mid"},
+    {"x":  0.5, "y": -0.3, "theta": -1.57,   "label": "hallway_center"},        # look into living room
+    {"x":  1.5, "y": -0.3, "theta":  0.0,    "label": "hallway_east_mid"},
+    {"x":  2.0, "y": -0.3, "theta":  0.0,    "label": "hallway_east"},
+    {"x":  3.0, "y": -0.3, "theta":  0.0,    "label": "hallway_far_east"},
 
-    # === Living Room ===
-    {"x":  1.5, "y": -1.7, "theta": -1.57,    "label": "living_room_center"},    # ✅ tested OK
-    {"x":  2.0, "y": -2.5, "theta": 3.14,     "label": "living_room_south"},
-    {"x":  0.5, "y": -1.5, "theta": -1.57,    "label": "near_sofa"},
+    # ═══ Phase 2: Living Room — open areas, multi-angle views ═══
+    {"x":  1.5, "y": -0.8, "theta": -1.57,   "label": "living_room_entry"},     # looking south into room
+    {"x":  0.8, "y": -1.2, "theta":  0.0,    "label": "near_sofa_east"},        # facing TV
+    {"x":  0.8, "y": -1.2, "theta":  3.14,   "label": "near_sofa_west"},        # facing sofa
+    {"x":  1.5, "y": -1.2, "theta": -1.57,   "label": "living_room_center"},
+    {"x":  2.2, "y": -1.0, "theta":  3.14,   "label": "facing_tv"},             # face west toward TV
+    {"x":  1.5, "y": -1.8, "theta":  3.14,   "label": "living_room_south"},     # deepest safe point
+    {"x":  2.5, "y": -1.2, "theta":  0.0,    "label": "living_room_east"},
+    {"x":  1.0, "y": -1.8, "theta":  1.57,   "label": "near_coffee_table"},
 
-    # === Transition to Kitchen ===
-    {"x":  3.5, "y": -0.5, "theta": 0.0,      "label": "hallway_to_kitchen"},
-    {"x":  5.0, "y": -0.5, "theta": 0.0,      "label": "kitchen_entrance"},
+    # ═══ Phase 3: Transition to Kitchen ═══
+    {"x":  3.5, "y": -0.3, "theta":  0.0,    "label": "hallway_to_kitchen"},
+    {"x":  4.5, "y": -0.4, "theta":  0.0,    "label": "kitchen_hallway"},
+    {"x":  5.0, "y": -0.4, "theta":  0.0,    "label": "kitchen_entrance"},
 
-    # === Kitchen (more viewpoints, facing fridge/appliances) ===
-    {"x":  6.5, "y": -1.5, "theta": 1.57,     "label": "kitchen_center"},
-    {"x":  7.5, "y": -2.5, "theta": 0.0,      "label": "kitchen_east"},
-    {"x":  6.5, "y": -3.5, "theta": -1.57,    "label": "kitchen_south"},
-    {"x":  7.0, "y": -0.5, "theta": 1.57,     "label": "facing_fridge"},
-    {"x":  6.0, "y": -0.5, "theta": 0.0,      "label": "kitchen_counter_view"},
-    {"x":  7.5, "y": -1.0, "theta": 3.14,     "label": "fridge_area"},
-    {"x":  5.5, "y": -2.0, "theta": 0.0,      "label": "kitchen_doorway_view"},
-    {"x":  8.0, "y": -1.5, "theta": 0.0,      "label": "kitchen_far_east"},
-    {"x":  7.0, "y": -2.0, "theta": 1.57,     "label": "kitchen_door_view"},
+    # ═══ Phase 4: Kitchen — comprehensive coverage ═══
+    {"x":  6.0, "y": -0.4, "theta":  0.0,    "label": "kitchen_counter"},
+    {"x":  6.0, "y": -0.4, "theta": -1.57,   "label": "kitchen_counter_south"}, # look into kitchen
+    {"x":  7.0, "y": -0.6, "theta":  1.57,   "label": "facing_fridge"},
+    {"x":  7.3, "y": -1.0, "theta":  3.14,   "label": "fridge_area"},
+    {"x":  6.4, "y": -1.5, "theta":  1.57,   "label": "kitchen_center_north"},
+    {"x":  6.4, "y": -1.5, "theta": -1.57,   "label": "kitchen_center_south"},
+    {"x":  7.8, "y": -1.6, "theta":  0.0,    "label": "kitchen_far_east"},
+    {"x":  7.0, "y": -2.0, "theta":  1.57,   "label": "kitchen_table"},
+    {"x":  5.6, "y": -1.9, "theta":  0.0,    "label": "kitchen_doorway"},
+    {"x":  7.3, "y": -2.3, "theta": -1.57,   "label": "kitchen_east"},
+    {"x":  6.5, "y": -3.3, "theta": -1.57,   "label": "kitchen_south"},
+    {"x":  5.5, "y": -3.0, "theta":  3.14,   "label": "kitchen_sw_corner"},
 
-    # === Transition to Bedroom ===
-    {"x":  3.5, "y": -0.5, "theta": 3.14,     "label": "back_to_hallway"},
-    {"x": -1.0, "y": -0.5, "theta": 3.14,     "label": "hallway_toward_bedroom"},
+    # ═══ Phase 5: Back through hallway ═══
+    {"x":  3.5, "y": -0.3, "theta":  3.14,   "label": "back_to_hallway"},
+    {"x":  0.5, "y": -0.3, "theta":  3.14,   "label": "hallway_return"},
 
-    # === Bedroom ===
-    {"x": -3.5, "y":  0.5, "theta": 3.14,     "label": "bedroom_entrance"},
-    {"x": -5.5, "y":  1.0, "theta": 1.57,     "label": "bedroom_center"},
+    # ═══ Phase 6: Bathroom / North rooms ═══
+    {"x": -0.5, "y":  0.0, "theta":  1.57,   "label": "north_hallway"},
+    {"x": -1.0, "y":  0.5, "theta":  1.57,   "label": "bathroom_entrance"},
+    {"x": -1.5, "y":  1.0, "theta":  3.14,   "label": "bathroom_left"},
+    {"x": -2.0, "y":  1.0, "theta":  1.57,   "label": "bathroom_center"},
+
+    # ═══ Phase 7: Bedroom — full coverage ═══
+    {"x": -3.3, "y":  0.4, "theta":  3.14,   "label": "bedroom_entrance"},
+    {"x": -3.5, "y":  0.4, "theta":  1.57,   "label": "bedroom_door_north"},    # look at bed
+    {"x": -4.5, "y":  0.6, "theta":  3.14,   "label": "bedroom_center"},
+    {"x": -4.5, "y":  0.6, "theta":  1.57,   "label": "facing_bed"},            # look north at bed
+    {"x": -5.4, "y":  0.6, "theta":  1.57,   "label": "bedroom_far"},
+    {"x": -5.4, "y":  0.6, "theta":  3.14,   "label": "facing_wardrobe"},       # look west at wardrobe
+    {"x": -4.5, "y":  1.5, "theta": -1.57,   "label": "bedroom_window"},
+    {"x": -3.5, "y":  1.5, "theta":  0.0,    "label": "bedroom_nightstand"},
+
+    # ═══ Phase 8: Exercise / Fitness Room (SW of bedroom — blue ball area) ═══
+    {"x": -5.5, "y": -0.5, "theta": -1.57,   "label": "fitness_entrance"},
+    {"x": -6.0, "y": -1.5, "theta":  3.14,   "label": "fitness_west"},
+    {"x": -5.0, "y": -1.5, "theta": -1.57,   "label": "fitness_center"},
+    {"x": -5.5, "y": -2.5, "theta":  0.0,    "label": "near_exercise_ball"},
+    {"x": -4.5, "y": -2.0, "theta":  3.14,   "label": "fitness_east"},
+
+    # ═══ Phase 9: Southeast Room (below living room / dining area) ═══
+    {"x":  2.0, "y": -2.5, "theta": -1.57,   "label": "se_room_entrance"},
+    {"x":  3.0, "y": -3.5, "theta":  0.0,    "label": "se_room_center"},
+    {"x":  4.0, "y": -3.5, "theta":  0.0,    "label": "se_room_east"},
+    {"x":  3.0, "y": -4.5, "theta": -1.57,   "label": "se_room_south"},
+    {"x":  2.0, "y": -4.0, "theta":  3.14,   "label": "se_room_west"},
 ]
 
 

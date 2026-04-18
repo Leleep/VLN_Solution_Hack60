@@ -7,6 +7,12 @@ __pycache__/
 venv/
 env/
 
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
 # ROS 2 & Gazebo
 log/
 build/
@@ -23,6 +29,14 @@ install/
 matterport_data/
 dataset/
 
+# Generated data (re-generate with explore_house.py)
+data/aws_house_graph/node_*.png
+data/aws_house_graph/poses.json
+
+# Output (re-generate with pipeline)
+output/
+
 # OS specific
 .DS_Store
 Thumbs.db
+
