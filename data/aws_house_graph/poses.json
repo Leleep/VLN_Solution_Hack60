@@ -1,0 +1,192 @@
+[
+  {
+    "id": 0,
+    "x": -1.2511408966227278,
+    "y": -0.4533166995519119,
+    "theta": 0.06222430074297446,
+    "label": "hallway_west",
+    "target_x": -1.0,
+    "target_y": -0.5,
+    "reached": true
+  },
+  {
+    "id": 1,
+    "x": 0.34715112204329324,
+    "y": -0.1695408305729053,
+    "theta": -0.1782646069737648,
+    "label": "hallway_center",
+    "target_x": 0.5,
+    "target_y": -0.5,
+    "reached": true
+  },
+  {
+    "id": 2,
+    "x": 1.8172143264471445,
+    "y": -0.33081545550289665,
+    "theta": -0.23560642289431669,
+    "label": "hallway_east",
+    "target_x": 2.0,
+    "target_y": -0.5,
+    "reached": true
+  },
+  {
+    "id": 3,
+    "x": 1.8296659219011666,
+    "y": -1.004321030676736,
+    "theta": -1.8100600119164663,
+    "label": "living_room_center",
+    "target_x": 1.5,
+    "target_y": -1.7,
+    "reached": true
+  },
+  {
+    "id": 4,
+    "x": 2.2844505366850716,
+    "y": -2.5990644752716983,
+    "theta": -3.0697653814590677,
+    "label": "living_room_south",
+    "target_x": 2.0,
+    "target_y": -2.5,
+    "reached": true
+  },
+  {
+    "id": 5,
+    "x": 0.4684489432994119,
+    "y": -1.103208991310115,
+    "theta": -1.857768253309377,
+    "label": "near_sofa",
+    "target_x": 0.5,
+    "target_y": -1.5,
+    "reached": true
+  },
+  {
+    "id": 6,
+    "x": 3.367805455323318,
+    "y": -0.2432613811534616,
+    "theta": -0.22124085278269534,
+    "label": "hallway_to_kitchen",
+    "target_x": 3.5,
+    "target_y": -0.5,
+    "reached": true
+  },
+  {
+    "id": 7,
+    "x": 4.832761288452329,
+    "y": -0.4299237927608912,
+    "theta": -0.1886135971544257,
+    "label": "kitchen_entrance",
+    "target_x": 5.0,
+    "target_y": -0.5,
+    "reached": true
+  },
+  {
+    "id": 8,
+    "x": 6.330417927807575,
+    "y": -1.3498355130611597,
+    "theta": 1.3197924662189295,
+    "label": "kitchen_center",
+    "target_x": 6.5,
+    "target_y": -1.5,
+    "reached": true
+  },
+  {
+    "id": 9,
+    "x": 7.297072758013269,
+    "y": -2.3688103514596115,
+    "theta": -0.2905747561292527,
+    "label": "kitchen_east",
+    "target_x": 7.5,
+    "target_y": -2.5,
+    "reached": true
+  },
+  {
+    "id": 10,
+    "x": 6.456286725872796,
+    "y": -3.3398257106948805,
+    "theta": -1.9039413657594104,
+    "label": "kitchen_south",
+    "target_x": 6.5,
+    "target_y": -3.5,
+    "reached": true
+  },
+  {
+    "id": 11,
+    "x": 6.887972332800492,
+    "y": -0.6469893732354356,
+    "theta": 1.340859469233892,
+    "label": "facing_fridge",
+    "target_x": 7.0,
+    "target_y": -0.5,
+    "reached": true
+  },
+  {
+    "id": 12,
+    "x": 6.187327278486637,
+    "y": -0.5099176035788321,
+    "theta": -0.24252108296524302,
+    "label": "kitchen_counter_view",
+    "target_x": 6.0,
+    "target_y": -0.5,
+    "reached": true
+  },
+  {
+    "id": 13,
+    "x": 7.310176510626374,
+    "y": -0.9009570953961353,
+    "theta": -2.9237820704927997,
+    "label": "fridge_area",
+    "target_x": 7.5,
+    "target_y": -1.0,
+    "reached": true
+  },
+  {
+    "id": 14,
+    "x": 5.548368468705861,
+    "y": -1.8602421364172481,
+    "theta": -0.2717233904176488,
+    "label": "kitchen_doorway_view",
+    "target_x": 5.5,
+    "target_y": -2.0,
+    "reached": true
+  },
+  {
+    "id": 15,
+    "x": 3.655339389534044,
+    "y": -0.5593595877717372,
+    "theta": 2.874349302872962,
+    "label": "back_to_hallway",
+    "target_x": 3.5,
+    "target_y": -0.5,
+    "reached": true
+  },
+  {
+    "id": 16,
+    "x": -0.9637144292804829,
+    "y": -0.18084319014489944,
+    "theta": -2.8979290130855735,
+    "label": "hallway_toward_bedroom",
+    "target_x": -1.0,
+    "target_y": -0.5,
+    "reached": true
+  },
+  {
+    "id": 17,
+    "x": -3.373887747785906,
+    "y": 0.3773596145098013,
+    "theta": 2.9385492377355047,
+    "label": "bedroom_entrance",
+    "target_x": -3.5,
+    "target_y": 0.5,
+    "reached": true
+  },
+  {
+    "id": 18,
+    "x": -5.405358638785758,
+    "y": 0.6123790071013243,
+    "theta": 1.8065445579808985,
+    "label": "bedroom_center",
+    "target_x": -5.5,
+    "target_y": 1.0,
+    "reached": true
+  }
+]

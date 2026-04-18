@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.env
+venv/
+env/
+
+# ROS 2 & Gazebo
+log/
+build/
+install/
+*.bag
+*.db3
+
+# Datasets & Models (Just in case)
+*.zip
+*.tar.gz
+*.sens
+*.glb
+*.obj
+matterport_data/
+dataset/
+
+# OS specific
+.DS_Store
+Thumbs.db

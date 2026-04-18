@@ -1,0 +1,24 @@
+environment:
+  backend: "aws_house"
+  graph_data_dir: "data/aws_house_graph"
+  # Phase 2: set backend to "mp3d" and configure below
+  mp3d_scan_id: "17DRP5sb8fy"
+  mp3d_data_root: "../matterport_data/v1/scans"
+
+models:
+  clip_model: "ViT-L-14"
+  clip_pretrained: "openai"
+  llm_backend: "ollama"        # "ollama" | "spacy" | "openai"
+  llm_model: "llama3"
+  ollama_host: "http://localhost:11434"
+
+graph:
+  pose_edge_threshold_m: 3.0   # connect nodes within this distance
+
+search:
+  alpha: 0.0002                # distance penalty (from lm_nav pipeline.py)
+  clip_prompt: "A photo of "   # text prefix (from lm_nav optimal_route.py)
+
+navigation:
+  success_threshold_m: 0.5     # Nav2 goal tolerance
+  frame_id: "map"
