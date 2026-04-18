@@ -30,8 +30,6 @@ matterport_data/
 dataset/
 
 # Generated data (re-generate with explore_house.py)
-data/aws_house_graph/node_*.png
-data/aws_house_graph/poses.json
 
 # Output (re-generate with pipeline)
 output/
