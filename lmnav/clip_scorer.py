@@ -167,3 +167,87 @@ class CLIPScorer:
         # Softmax per column (per landmark)
         from scipy.special import softmax
         return softmax(raw_scores / temperature, axis=0)
+
+    def compute_patch_heatmap(
+        self, image_path: str, landmark_text: str
+    ):
+        """
+        Compute a 16×16 per-patch CLIP similarity heatmap for a single image.
+
+        Uses a forward hook on the last ViT transformer block to extract the
+        256 patch token embeddings (before final projection/pooling). Each
+        patch's embedding is compared against the landmark text embedding to
+        produce a spatial similarity map.
+
+        Args:
+            image_path: Path to the RGB image file.
+            landmark_text: The landmark text (e.g., "a fridge").
+
+        Returns:
+            (px_orig, py_orig, heatmap):
+                px_orig, py_orig — pixel (u, v) of the landmark centroid
+                                   in original image coordinates.
+                                   None if confidence is low.
+                heatmap — 16×16 numpy array of per-patch similarities.
+        """
+        from PIL import Image as PILImage
+
+        orig_img = PILImage.open(image_path).convert("RGB")
+        orig_w, orig_h = orig_img.size
+        img_tensor = self.preprocess(orig_img).unsqueeze(0).to(self.device)
+
+        # Register a forward hook on the last transformer block
+        patch_tokens_out = []
+        def _hook(module, inp, out):
+            # open_clip ViT: out shape is (seq_len, batch, dim)
+            patch_tokens_out.append(out.permute(1, 0, 2).detach())
+
+        # Navigate to the last transformer block
+        # open_clip ViT-L/14 structure: model.visual.transformer.resblocks[-1]
+        hook_target = self.model.visual.transformer.resblocks[-1]
+        hook_handle = hook_target.register_forward_hook(_hook)
+
+        try:
+            with torch.no_grad():
+                _ = self.model.encode_image(img_tensor)
+                text_prompt = self.prompt_template + landmark_text
+                text_tokens = self.tokenizer([text_prompt]).to(self.device)
+                text_feat = self.model.encode_text(text_tokens)  # [1, dim]
+        finally:
+            hook_handle.remove()
+
+        if not patch_tokens_out:
+            return None, None, np.zeros((16, 16))
+
+        # patch_tokens_out[0] shape: [1, 257, dim] (1 CLS + 256 patches)
+        all_tokens = patch_tokens_out[0][0]  # [257, dim]
+        patches = all_tokens[1:, :]  # [256, dim] — drop CLS token
+
+        # Normalize and compute cosine similarity
+        patches = patches / patches.norm(dim=-1, keepdim=True)
+        text_feat = text_feat / text_feat.norm(dim=-1, keepdim=True)
+        sim = (patches @ text_feat.T).squeeze().cpu().numpy()  # [256]
+        heatmap = sim.reshape(16, 16)
+
+        # Weighted centroid of patches above the 60th percentile
+        threshold = np.percentile(heatmap, 60)
+        mask = heatmap > threshold
+        if mask.sum() == 0:
+            return None, None, heatmap  # low confidence
+
+        rows, cols = np.where(mask)
+        weights = heatmap[rows, cols]
+        patch_row = np.average(rows, weights=weights)
+        patch_col = np.average(cols, weights=weights)
+
+        # Center of patch in 224×224 pixel space
+        patch_size = 14
+        px_224 = patch_col * patch_size + patch_size / 2.0
+        py_224 = patch_row * patch_size + patch_size / 2.0
+
+        # Scale to original image resolution
+        px_orig = int(px_224 * orig_w / 224.0)
+        py_orig = int(py_224 * orig_h / 224.0)
+
+        return px_orig, py_orig, heatmap
+

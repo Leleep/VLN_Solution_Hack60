@@ -168,6 +168,25 @@ class HouseExplorer(Node):
             10,
         )
 
+        # Depth image subscriber (for depth-gated capture)
+        self._latest_depth = None
+        self._depth_sub = self.create_subscription(
+            ROSImage,
+            "/intel_realsense_r200_depth/depth/image_raw",  # 16-bit depth, mm
+            self._depth_callback,
+            10,
+        )
+
+        # Camera intrinsics subscriber (for depth unprojection in approach phase)
+        from sensor_msgs.msg import CameraInfo
+        self._camera_intrinsics = None
+        self._cam_info_sub = self.create_subscription(
+            CameraInfo,
+            "/intel_realsense_r200_depth/depth/camera_info",
+            self._cam_info_callback,
+            10,
+        )
+
         # Odometry subscriber for ground-truth pose
         self._latest_odom = None
         self._odom_sub = self.create_subscription(
@@ -201,6 +220,34 @@ class HouseExplorer(Node):
     def _odom_callback(self, msg: Odometry):
         """Store the latest odometry."""
         self._latest_odom = msg
+
+    def _depth_callback(self, msg: ROSImage):
+        """Store the latest depth image."""
+        try:
+            if msg.encoding == "16UC1":
+                depth_array = np.frombuffer(msg.data, dtype=np.uint16)
+                depth_array = depth_array.reshape((msg.height, msg.width))
+            elif msg.encoding == "32FC1":
+                depth_array = np.frombuffer(msg.data, dtype=np.float32)
+                depth_array = depth_array.reshape((msg.height, msg.width))
+            else:
+                return  # Unknown encoding
+            self._latest_depth = depth_array.copy()
+            self._depth_encoding = msg.encoding
+        except Exception as e:
+            self.get_logger().error(f"Failed to convert depth: {e}")
+
+    def _cam_info_callback(self, msg):
+        """Store the camera intrinsics (once)."""
+        if self._camera_intrinsics is None:
+            self._camera_intrinsics = {
+                "fx": msg.k[0],
+                "fy": msg.k[4],
+                "cx": msg.k[2],
+                "cy": msg.k[5],
+                "width": msg.width,
+                "height": msg.height,
+            }
 
     def _get_current_pose(self):
         """Extract (x, y, theta) from latest odometry."""
@@ -398,7 +445,7 @@ class HouseExplorer(Node):
         return False
 
     def capture_node(self, node_id: int) -> dict:
-        """Capture current image + pose and save to disk."""
+        """Capture current image + pose + depth and save to disk."""
         # Wait for fresh data
         for _ in range(30):  # wait up to 3 seconds
             rclpy.spin_once(self, timeout_sec=0.1)
@@ -426,54 +473,143 @@ class HouseExplorer(Node):
             "y": pose[1],
             "theta": pose[2],
         }
+
+        # Save depth image as .npy for approach phase (depth unprojection)
+        if self._latest_depth is not None:
+            depth = self._latest_depth.copy()
+
+            # Convert to float32 meters if needed (16UC1 is in millimeters)
+            if hasattr(self, '_depth_encoding') and self._depth_encoding == "16UC1":
+                depth_m = depth.astype(np.float32) / 1000.0
+            else:
+                depth_m = depth.astype(np.float32)
+
+            depth_path = self.output_dir / f"node_{node_id:03d}_depth.npy"
+            np.save(str(depth_path), depth_m)
+
+            # Also compute median depth metadata
+            h, w = depth.shape
+            center = depth[h//4:3*h//4, w//4:3*w//4]
+            # Filter invalid readings (0 = no return, >6000mm = too far)
+            valid = center[(center > 0) & (center < 6000)]
+            if len(valid) > 0:
+                median_depth_mm = float(np.median(valid))
+                node_data["median_depth_m"] = round(median_depth_mm / 1000.0, 3)
+                node_data["depth_source"] = "realsense"
+            else:
+                node_data["median_depth_m"] = None
+                node_data["depth_source"] = "no_valid_readings"
+        else:
+            node_data["median_depth_m"] = None
+            node_data["depth_source"] = "no_depth_topic"
+
         self.get_logger().info(
             f"📸 Captured node {node_id}: "
             f"({pose[0]:.2f}, {pose[1]:.2f}, θ={pose[2]:.2f}) → {img_path.name}"
+            f" depth={node_data.get('median_depth_m', 'N/A')}m"
         )
         return node_data
 
     def run_exploration(self, waypoints: list) -> list:
-        """Drive to all waypoints, capture images + poses."""
-        # Wait for Nav2 to be ready first
+        """
+        Drive to all waypoints, capture images + poses.
+
+        Optimized: waypoints at the same (x, y) are grouped so the robot
+        navigates to each physical position ONCE, then rotates in place for
+        each angular capture. This prevents redundant re-navigations that
+        cause the robot to get stuck on repeated small goals.
+        """
         if not self.wait_for_nav2_ready():
             self.get_logger().error(
-                "❌ Nav2 is not ready. Make sure you launched with a pre-built map:\n"
-                "   ros2 launch nav2_bringup tb3_simulation_launch.py headless:=False "
-                "world:=<path>/small_house.world map:=<path>/map.yaml"
+                "❌ Nav2 is not ready. Make sure you launched with a pre-built map."
             )
             return []
 
-        self.get_logger().info(f"🗺️  Starting exploration: {len(waypoints)} waypoints")
-        all_poses = []
-        failed_count = 0
+        # ── Save camera intrinsics (once) for depth unprojection ──────────
+        # Wait briefly for CameraInfo to arrive
+        for _ in range(50):
+            rclpy.spin_once(self, timeout_sec=0.1)
+            if self._camera_intrinsics is not None:
+                break
 
-        for idx, wp in enumerate(waypoints):
+        if self._camera_intrinsics is not None:
+            intrinsics_path = self.output_dir / "camera_intrinsics.json"
+            with open(intrinsics_path, "w") as f:
+                json.dump(self._camera_intrinsics, f, indent=2)
+            self.get_logger().info(
+                f"📷 Camera intrinsics saved: {intrinsics_path}\n"
+                f"   fx={self._camera_intrinsics['fx']:.1f}, "
+                f"fy={self._camera_intrinsics['fy']:.1f}, "
+                f"cx={self._camera_intrinsics['cx']:.1f}, "
+                f"cy={self._camera_intrinsics['cy']:.1f}"
+            )
+        else:
+            self.get_logger().warn(
+                "⚠️  Could not capture camera intrinsics. "
+                "Depth-based approach goals will not work."
+            )
+
+        # ── Group waypoints by unique (x, y) position ──────────────────────
+        from collections import OrderedDict
+        position_groups: OrderedDict = OrderedDict()
+        for wp in waypoints:
+            key = (round(wp["x"], 2), round(wp["y"], 2))
+            if key not in position_groups:
+                position_groups[key] = []
+            position_groups[key].append(wp)
+
+        n_unique   = len(position_groups)
+        n_total    = len(waypoints)
+        self.get_logger().info(
+            f"🗺️  Starting exploration: {n_total} waypoints at "
+            f"{n_unique} unique positions"
+        )
+
+        all_poses   = []
+        failed_count = 0
+        node_idx    = 0
+
+        for pos_idx, ((px, py), group) in enumerate(position_groups.items()):
             self.get_logger().info(
                 f"\n{'='*50}\n"
-                f"📍 Waypoint {idx}/{len(waypoints)-1}: {wp.get('label', 'unnamed')}\n"
+                f"📍 Position {pos_idx+1}/{n_unique}: ({px:.2f}, {py:.2f})  "
+                f"→  {len(group)} view(s)\n"
                 f"{'='*50}"
             )
 
-            # Navigate to waypoint (with retry)
-            success = self.navigate_to(wp["x"], wp["y"], wp["theta"], retries=1)
+            # Navigate to this position ONCE (use first angle in the group)
+            first_wp  = group[0]
+            success   = self.navigate_to(px, py, first_wp["theta"], retries=2)
             if not success:
                 failed_count += 1
                 self.get_logger().warn(
-                    f"⚠️  Could not reach waypoint {idx} ({wp.get('label')}). "
-                    f"Capturing from current position instead."
+                    f"⚠️  Could not reach position ({px:.2f}, {py:.2f}). "
+                    f"Capturing from current position."
                 )
 
-            # Small pause to stabilize
-            time.sleep(1.0)
+            time.sleep(0.8)  # stabilize after arrival
 
-            # Capture image + pose at current position
-            node_data = self.capture_node(idx)
-            if node_data is not None:
-                node_data["label"] = wp.get("label", f"waypoint_{idx}")
-                node_data["target_x"] = wp["x"]
-                node_data["target_y"] = wp["y"]
-                node_data["reached"] = success
-                all_poses.append(node_data)
+            # Capture each angular view at this position
+            for angle_wp in group:
+                # Rotate in place if angle differs from current orientation
+                if angle_wp is not first_wp or len(group) == 1:
+                    rotate_ok = self.navigate_to(px, py, angle_wp["theta"], retries=1)
+                    if not rotate_ok:
+                        self.get_logger().warn(
+                            f"⚠️  Rotation to θ={angle_wp['theta']:.2f} failed. "
+                            f"Capturing current view."
+                        )
+                    time.sleep(0.5)
+
+                node_data = self.capture_node(node_idx)
+                if node_data is not None:
+                    node_data["label"]    = angle_wp.get("label", f"auto_{node_idx:03d}")
+                    node_data["target_x"] = angle_wp["x"]
+                    node_data["target_y"] = angle_wp["y"]
+                    node_data["reached"]  = success
+                    all_poses.append(node_data)
+
+                node_idx += 1
 
         # Save poses to JSON
         poses_file = self.output_dir / "poses.json"
@@ -482,11 +618,40 @@ class HouseExplorer(Node):
 
         self.get_logger().info(
             f"\n🎉 Exploration complete!\n"
-            f"   Captured {len(all_poses)}/{len(waypoints)} nodes\n"
-            f"   Successfully reached: {len(waypoints) - failed_count}/{len(waypoints)}\n"
+            f"   Captured {len(all_poses)}/{n_total} nodes\n"
+            f"   Successfully reached: {n_unique - failed_count}/{n_unique} positions\n"
             f"   Data saved to: {self.output_dir}"
         )
         return all_poses
+
+
+def load_waypoints(project_root: Path, use_legacy: bool = False) -> list:
+    """
+    Load exploration waypoints.
+
+    Priority:
+      1. chamber_nodes.json (auto-generated by generate_waypoints.py)
+      2. Legacy hardcoded EXPLORATION_WAYPOINTS (if --legacy-waypoints flag)
+    """
+    chamber_path = project_root / "data" / "aws_house_graph" / "chamber_nodes.json"
+
+    if not use_legacy and chamber_path.exists():
+        print(f"📄 Loading auto-generated waypoints from: {chamber_path}")
+        with open(chamber_path, "r") as f:
+            waypoints = json.load(f)
+        print(f"   Loaded {len(waypoints)} waypoints")
+        return waypoints
+
+    if not use_legacy and not chamber_path.exists():
+        print(
+            f"⚠️  chamber_nodes.json not found at {chamber_path}\n"
+            f"   Run 'python scripts/generate_waypoints.py' first, or use\n"
+            f"   '--legacy-waypoints' to use the hardcoded waypoint list."
+        )
+        print("\n🔄 Falling back to legacy waypoints...")
+
+    print(f"📋 Using legacy hardcoded waypoints: {len(EXPLORATION_WAYPOINTS)} waypoints")
+    return EXPLORATION_WAYPOINTS
 
 
 def main():
@@ -495,15 +660,40 @@ def main():
         print("❌ ROS2 is required. Source your workspace and try again.")
         sys.exit(1)
 
+    import argparse
+    parser = argparse.ArgumentParser(description="Automated House Exploration")
+    parser.add_argument(
+        "--legacy-waypoints", action="store_true",
+        help="Use hardcoded waypoints instead of chamber_nodes.json",
+    )
+    parser.add_argument(
+        "--single-node", type=int, default=None,
+        help="Explore only a single waypoint (for testing)",
+    )
+    args = parser.parse_args()
+
     # Determine output directory
     script_dir = Path(__file__).resolve().parent.parent
     output_dir = script_dir / "data" / "aws_house_graph"
+
+    # Load waypoints
+    waypoints = load_waypoints(script_dir, use_legacy=args.legacy_waypoints)
+
+    # Single-node mode (for testing)
+    if args.single_node is not None:
+        idx = args.single_node
+        if idx < len(waypoints):
+            waypoints = [waypoints[idx]]
+            print(f"🧪 Single-node mode: testing waypoint {idx}")
+        else:
+            print(f"❌ Node {idx} out of range (0-{len(waypoints)-1})")
+            sys.exit(1)
 
     rclpy.init()
     explorer = HouseExplorer(str(output_dir))
 
     try:
-        poses = explorer.run_exploration(EXPLORATION_WAYPOINTS)
+        poses = explorer.run_exploration(waypoints)
         print(f"\n✅ Exploration finished. {len(poses)} nodes captured.")
         print(f"   Images: {output_dir}/node_*.png")
         print(f"   Poses:  {output_dir}/poses.json")
@@ -516,4 +706,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

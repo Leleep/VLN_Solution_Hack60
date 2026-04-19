@@ -93,14 +93,27 @@ if echo "$MODELS" | grep -q "turtlebot3_waffle"; then
     echo "✅ TurtleBot3 already spawned by launch file!"
 else
     echo "🤖 Spawning TurtleBot3 waffle at (-2.0, -0.5)..."
-    ros2 run gazebo_ros spawn_entity.py \
-        -entity turtlebot3_waffle \
-        -file ${ROBOT_SDF} \
-        -x -2.0 -y -0.5 -z 0.01
-    echo "✅ TurtleBot3 spawned!"
+    for try in 1 2 3; do
+        ros2 run gazebo_ros spawn_entity.py \
+            -entity turtlebot3_waffle \
+            -file ${ROBOT_SDF} \
+            -x -2.0 -y -0.5 -z 0.01
+        
+        sleep 3
+        # Verify it actually spawned
+        CHECK=$(ros2 service call /get_model_list gazebo_msgs/srv/GetModelList '{}' 2>/dev/null)
+        if echo "$CHECK" | grep -q "turtlebot3_waffle"; then
+            echo "✅ TurtleBot3 spawned successfully on attempt ${try}!"
+            break
+        else
+            echo "⚠️  Spawn attempt ${try} failed, retrying..."
+        fi
+    done
 fi
 
-# ── Verify ──
+# ── Ensure emergency spawn is executable ──
+chmod +x emergency_spawn.sh 2>/dev/null || true
+
 sleep 2
 ODOM_PUB=$(ros2 topic info /odom 2>/dev/null | grep "Publisher count" | awk '{print $3}')
 if [ "$ODOM_PUB" -ge 1 ] 2>/dev/null; then

@@ -2,13 +2,14 @@
 """
 Visualize Exploration Nodes on House Map
 =========================================
-Overlays all exploration waypoints and/or captured poses on the
-occupancy grid map (map.pgm) of the AWS Small House.
+Loads actual captured poses from poses.json and shows them overlaid on
+the occupancy grid map. Also draws transit-edge paths if transit_edges.json
+is available.
 
 Usage:
-    python scripts/visualize_nodes.py                    # Show planned waypoints
-    python scripts/visualize_nodes.py --poses             # Overlay captured poses too
-    python scripts/visualize_nodes.py --save map_viz.png  # Save to file
+    python scripts/visualize_nodes.py                   # Show all nodes on map
+    python scripts/visualize_nodes.py --transit         # Also draw transit paths
+    python scripts/visualize_nodes.py --save map_viz.png
 """
 
 import argparse
@@ -19,207 +20,224 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
+from matplotlib.lines import Line2D
 import numpy as np
 
 try:
-    from PIL import Image
+    from PIL import Image as PILImage
 except ImportError:
     print("❌ Pillow required: pip install Pillow")
     sys.exit(1)
 
-# ── Import waypoints without triggering ROS2 imports ──
-def _load_waypoints():
-    """Load EXPLORATION_WAYPOINTS from explore_house.py without importing the module."""
-    wp_file = Path(__file__).resolve().parent / "explore_house.py"
-    source = wp_file.read_text()
-    # Extract just the EXPLORATION_WAYPOINTS list
-    ns = {}
-    # Find the start of the list and extract it
-    start = source.find("EXPLORATION_WAYPOINTS = [")
-    if start == -1:
-        raise RuntimeError("Cannot find EXPLORATION_WAYPOINTS in explore_house.py")
-    # Find matching closing bracket
-    depth = 0
-    end = start
-    for i, ch in enumerate(source[start:], start):
-        if ch == "[":
-            depth += 1
-        elif ch == "]":
-            depth -= 1
-            if depth == 0:
-                end = i + 1
-                break
-    snippet = source[start:end]
-    exec(snippet, ns)
-    return ns["EXPLORATION_WAYPOINTS"]
+# ── Project root ──────────────────────────────────────────────────────────────
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
 
-EXPLORATION_WAYPOINTS = _load_waypoints()
+from lmnav.map_utils import load_map, world_to_pixel
 
-
-# ── Map parameters (from map.yaml) ──
-MAP_RESOLUTION = 0.05          # meters per pixel
-MAP_ORIGIN_X = -12.5           # world x at pixel (0, height)
-MAP_ORIGIN_Y = -12.5           # world y at pixel (0, height)
-
-
-def world_to_pixel(x, y, map_height):
-    """Convert world coordinates (meters) to pixel coordinates on the map."""
-    px = int((x - MAP_ORIGIN_X) / MAP_RESOLUTION)
-    py = int(map_height - (y - MAP_ORIGIN_Y) / MAP_RESOLUTION)
-    return px, py
-
-
-# ── Room color coding ──
-ROOM_COLORS = {
-    "hallway":    "#3498db",   # blue
-    "living":     "#e74c3c",   # red
-    "kitchen":    "#2ecc71",   # green
-    "bathroom":   "#9b59b6",   # purple
-    "bedroom":    "#f39c12",   # orange
-    "fitness":    "#1abc9c",   # teal
-    "se_room":    "#e91e63",   # pink
-    "back_to":    "#95a5a6",   # grey (transit)
-    "north":      "#9b59b6",   # purple (bathroom access)
-    "facing":     "#e67e22",   # dark orange
-    "near":       "#e74c3c",   # red (living room)
-}
-
-
-def get_color(label):
-    """Get color based on waypoint label."""
-    for key, color in ROOM_COLORS.items():
-        if key in label:
-            return color
-    return "#34495e"  # default dark grey
+# ── Map configuration ─────────────────────────────────────────────────────────
+MAP_YAML = (
+    PROJECT_ROOT
+    / "aws-robomaker-small-house-world"
+    / "maps"
+    / "turtlebot3_waffle_pi"
+    / "map.yaml"
+)
+GRAPH_DIR = PROJECT_ROOT / "data" / "aws_house_graph"
 
 
 def main():
     parser = argparse.ArgumentParser(description="Visualize exploration nodes on house map")
-    parser.add_argument("--poses", action="store_true", help="Also show captured poses from poses.json")
-    parser.add_argument("--save", type=str, default=None, help="Save to file instead of showing")
-    parser.add_argument("--no-labels", action="store_true", help="Don't show node labels (cleaner)")
+    parser.add_argument("--transit",   action="store_true",
+                        help="Draw A* transit paths between nodes")
+    parser.add_argument("--no-labels", action="store_true",
+                        help="Hide node ID labels")
+    parser.add_argument("--save",      type=str, default=None,
+                        help="Save to file instead of showing interactively")
     args = parser.parse_args()
 
-    # ── Load map ──
-    script_dir = Path(__file__).resolve().parent.parent
-    map_path = script_dir / "aws-robomaker-small-house-world" / "maps" / "turtlebot3_waffle_pi" / "map.pgm"
-
-    if not map_path.exists():
-        print(f"❌ Map not found: {map_path}")
+    # ── Validate paths ────────────────────────────────────────────────────────
+    if not MAP_YAML.exists():
+        print(f"❌ Map not found: {MAP_YAML}")
         sys.exit(1)
 
-    map_img = np.array(Image.open(map_path))
-    map_height, map_width = map_img.shape[:2]
-    print(f"📍 Map loaded: {map_width}x{map_height} pixels, "
-          f"resolution={MAP_RESOLUTION}m/px")
+    poses_path = GRAPH_DIR / "poses.json"
+    if not poses_path.exists():
+        print(f"❌ poses.json not found: {poses_path}")
+        print("   Run 'python scripts/explore_house.py' first.")
+        sys.exit(1)
 
-    # ── Create figure ──
-    fig, ax = plt.subplots(1, 1, figsize=(16, 16))
-    ax.imshow(map_img, cmap="gray", origin="upper")
-    ax.set_title("LM-Nav Exploration Nodes — AWS Small House", fontsize=16, fontweight="bold")
+    # ── Load map ──────────────────────────────────────────────────────────────
+    map_data = load_map(str(MAP_YAML))
+    map_img  = np.array(PILImage.open(
+        str(MAP_YAML).replace(".yaml", ".pgm")
+    ))
+    print(f"📍 Map: {map_data.width}×{map_data.height} px, "
+          f"{map_data.resolution} m/px, "
+          f"origin ({map_data.origin_x:.1f}, {map_data.origin_y:.1f})")
 
-    # ── Plot planned waypoints ──
-    arrow_len = 12  # pixels
-    for idx, wp in enumerate(EXPLORATION_WAYPOINTS):
-        px, py = world_to_pixel(wp["x"], wp["y"], map_height)
-        color = get_color(wp["label"])
+    # ── Load poses ────────────────────────────────────────────────────────────
+    with open(poses_path) as f:
+        poses = json.load(f)
+    print(f"📊 Loaded {len(poses)} captured poses")
 
-        # Draw node circle
-        ax.plot(px, py, "o", color=color, markersize=8, markeredgecolor="white",
-                markeredgewidth=1.5, zorder=5)
+    # ── Load transit edges (optional) ─────────────────────────────────────────
+    transit_edges = {}
+    blocked_edges = []
+    transit_path  = GRAPH_DIR / "transit_edges.json"
+    if args.transit and transit_path.exists():
+        with open(transit_path) as f:
+            td = json.load(f)
+        transit_edges = td.get("edges", {})
+        blocked_edges = td.get("blocked", [])
+        n_transit = sum(len(v) for v in transit_edges.values())
+        print(f"🗺️  Transit graph: {len(transit_edges)} edges, "
+              f"{n_transit} transit waypoints, "
+              f"{len(blocked_edges)} blocked")
 
-        # Draw orientation arrow
-        dx = arrow_len * math.cos(wp["theta"])
-        dy = -arrow_len * math.sin(wp["theta"])  # negative because pixel y is inverted
-        ax.annotate("", xy=(px + dx, py + dy), xytext=(px, py),
-                    arrowprops=dict(arrowstyle="->", color=color, lw=1.5),
-                    zorder=4)
+    # ── Figure ────────────────────────────────────────────────────────────────
+    fig, ax = plt.subplots(figsize=(16, 14))
+    ax.imshow(map_img, cmap="gray", origin="upper", alpha=0.85)
+    ax.set_title(
+        f"LM-Nav Exploration — AWS Small House\n"
+        f"{len(poses)} nodes at {len(set((round(p['x'],1),round(p['y'],1)) for p in poses))} "
+        f"unique positions",
+        fontsize=14, fontweight="bold"
+    )
 
-        # Node ID label
+    # ── Draw transit paths ────────────────────────────────────────────────────
+    if args.transit:
+        # Gather node positions by ID
+        pose_by_id = {p["id"]: p for p in poses}
+
+        for key, wps in transit_edges.items():
+            a_id, b_id = int(key.split("-")[0]), int(key.split("-")[1])
+            pa = pose_by_id.get(a_id)
+            pb = pose_by_id.get(b_id)
+            if pa is None or pb is None:
+                continue
+
+            full_path = [{"x": pa["x"], "y": pa["y"]}] + wps + [{"x": pb["x"], "y": pb["y"]}]
+            xs = [world_to_pixel(w["x"], w["y"], map_data)[0] for w in full_path]
+            ys = [world_to_pixel(w["x"], w["y"], map_data)[1] for w in full_path]
+            ax.plot(xs, ys, "-", color="deepskyblue", alpha=0.55, lw=1.5, zorder=2)
+
+            for wp in wps:
+                px, py = world_to_pixel(wp["x"], wp["y"], map_data)
+                ax.plot(px, py, ".", color="deepskyblue", markersize=4, zorder=3)
+
+        for key in blocked_edges:
+            a_id, b_id = int(key.split("-")[0]), int(key.split("-")[1])
+            pa = pose_by_id.get(a_id)
+            pb = pose_by_id.get(b_id)
+            if pa and pb:
+                ax.plot(
+                    *zip(world_to_pixel(pa["x"], pa["y"], map_data),
+                         world_to_pixel(pb["x"], pb["y"], map_data)),
+                    "--", color="red", alpha=0.8, lw=1.5, zorder=2
+                )
+
+    # ── Group poses by unique position ────────────────────────────────────────
+    from collections import defaultdict
+    groups = defaultdict(list)
+    for p in poses:
+        key = (round(p["x"], 1), round(p["y"], 1))
+        groups[key].append(p)
+
+    arrow_len = 14  # pixels
+
+    # ── Draw each unique position ─────────────────────────────────────────────
+    position_cm = plt.cm.get_cmap("tab20", len(groups))
+    for color_idx, ((px_world, py_world), group) in enumerate(groups.items()):
+        color = position_cm(color_idx)
+        representative = group[0]
+        px, py = world_to_pixel(representative["x"], representative["y"], map_data)
+
+        # Draw position circle
+        ax.plot(px, py, "o", color=color, markersize=11,
+                markeredgecolor="white", markeredgewidth=1.8, zorder=5)
+
+        # Draw orientation arrows for each angle
+        for p in group:
+            theta = p.get("theta", 0)
+            dx_arr =  arrow_len * math.cos(theta)
+            dy_arr = -arrow_len * math.sin(theta)  # y-axis flipped in image
+            apx, apy = world_to_pixel(p["x"], p["y"], map_data)
+            ax.annotate("", xy=(apx + dx_arr, apy + dy_arr), xytext=(apx, apy),
+                        arrowprops=dict(arrowstyle="->", color=color, lw=1.8),
+                        zorder=4)
+
+        # Node ID label (show the first node's ID + count of angles)
         if not args.no_labels:
-            ax.annotate(f"{idx}", (px + 5, py - 5), fontsize=6, color=color,
+            label = str(representative["id"])
+            if len(group) > 1:
+                label += f"+{len(group)-1}"
+            ax.annotate(label, (px + 5, py - 5), fontsize=6, color="white",
                         fontweight="bold", zorder=6,
-                        bbox=dict(boxstyle="round,pad=0.15", facecolor="white",
-                                  edgecolor=color, alpha=0.8))
+                        bbox=dict(boxstyle="round,pad=0.15", facecolor="#1a1a2e",
+                                  edgecolor=color, alpha=0.85))
 
-    # ── Room label annotations (placed at room centers) ──
-    room_labels = [
+        # Mark failed nodes with an X
+        if not representative.get("reached", True):
+            ax.plot(px, py, "x", color="red", markersize=12,
+                    markeredgewidth=2.5, zorder=7)
+
+    # ── Room label annotations ─────────────────────────────────────────────────
+    ROOM_LABELS = [
         (-1.0, -0.3, "Hallway"),
-        (1.5, -1.2, "Living\nRoom"),
-        (6.5, -1.5, "Kitchen"),
-        (-1.5, 1.0, "Bathroom"),
-        (-4.5, 0.6, "Bedroom"),
-        (-5.5, -1.5, "Fitness\nRoom"),
-        (3.0, -3.5, "SE Room"),
+        (1.5,  -1.2, "Living Room"),
+        (6.5,  -1.5, "Kitchen"),
+        (-1.5,  1.0, "Bathroom"),
+        (-4.5,  0.6, "Bedroom"),
+        (-5.5, -1.5, "Fitness Room"),
+        (3.0,  -3.5, "SE Room"),
     ]
-    for rx, ry, rlabel in room_labels:
-        rpx, rpy = world_to_pixel(rx, ry, map_height)
-        ax.annotate(rlabel, (rpx, rpy), fontsize=11, fontweight="bold",
-                    color="white", ha="center", va="center",
-                    bbox=dict(boxstyle="round,pad=0.3", facecolor="#2c3e50",
-                              edgecolor="white", alpha=0.85),
-                    zorder=7)
+    for rx, ry, rlabel in ROOM_LABELS:
+        rpx, rpy = world_to_pixel(rx, ry, map_data)
+        if 0 <= rpx < map_data.width and 0 <= rpy < map_data.height:
+            ax.annotate(rlabel, (rpx, rpy), fontsize=11, fontweight="bold",
+                        color="white", ha="center", va="center",
+                        bbox=dict(boxstyle="round,pad=0.3", facecolor="#2c3e50",
+                                  edgecolor="white", alpha=0.80),
+                        zorder=8)
 
-    # ── Overlay captured poses (actual robot positions) ──
-    if args.poses:
-        poses_path = script_dir / "data" / "aws_house_graph" / "poses.json"
-        if poses_path.exists():
-            with open(poses_path) as f:
-                poses = json.load(f)
-            print(f"📊 Loaded {len(poses)} captured poses")
-
-            for pose in poses:
-                px, py = world_to_pixel(pose["x"], pose["y"], map_height)
-                reached = pose.get("reached", True)
-
-                marker = "^" if reached else "x"
-                mcolor = "#00ff00" if reached else "#ff0000"
-                msize = 6 if reached else 8
-
-                ax.plot(px, py, marker, color=mcolor, markersize=msize,
-                        markeredgecolor="black", markeredgewidth=0.5, zorder=8)
-
-                # Draw line from planned to actual position
-                if "target_x" in pose and "target_y" in pose:
-                    tpx, tpy = world_to_pixel(pose["target_x"], pose["target_y"], map_height)
-                    ax.plot([tpx, px], [tpy, py], "-", color=mcolor, alpha=0.4, lw=0.8, zorder=3)
-        else:
-            print(f"⚠️  No poses.json found at {poses_path}")
-
-    # ── Legend ──
+    # ── Legend ────────────────────────────────────────────────────────────────
     legend_items = [
-        mpatches.Patch(color="#3498db", label="Hallway"),
-        mpatches.Patch(color="#e74c3c", label="Living Room"),
-        mpatches.Patch(color="#2ecc71", label="Kitchen"),
-        mpatches.Patch(color="#9b59b6", label="Bathroom"),
-        mpatches.Patch(color="#f39c12", label="Bedroom"),
-        mpatches.Patch(color="#1abc9c", label="Fitness Room"),
-        mpatches.Patch(color="#e91e63", label="SE Room"),
+        Line2D([0], [0], marker="o", color="w", markerfacecolor="lime",
+               markersize=10, label=f"Reached node ({len(poses)} total)"),
+        Line2D([0], [0], marker="x", color="red", markersize=8,
+               markeredgewidth=2, lw=0, label="Failed navigation"),
     ]
-    if args.poses:
-        legend_items.extend([
-            plt.Line2D([0], [0], marker="^", color="w", markerfacecolor="#00ff00",
-                       markersize=8, label="Reached (actual)"),
-            plt.Line2D([0], [0], marker="x", color="w", markerfacecolor="#ff0000",
-                       markersize=8, label="Failed (actual)"),
-        ])
+    if args.transit:
+        legend_items += [
+            Line2D([0], [0], color="deepskyblue", lw=2, label="Transit path (A*)"),
+            Line2D([0], [0], marker=".", color="deepskyblue", markersize=6,
+                   lw=0, label="Transit waypoint"),
+            Line2D([0], [0], color="red", lw=2, ls="--", label="Blocked edge"),
+        ]
 
-    ax.legend(handles=legend_items, loc="upper right", fontsize=9,
-              framealpha=0.9, fancybox=True)
+    ax.legend(handles=legend_items, loc="upper right", fontsize=9, framealpha=0.92)
 
-    # ── Stats ──
-    n_waypoints = len(EXPLORATION_WAYPOINTS)
-    ax.text(0.02, 0.02, f"Total waypoints: {n_waypoints}",
-            transform=ax.transAxes, fontsize=10, verticalalignment="bottom",
-            bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.8))
+    # ── Stats box ─────────────────────────────────────────────────────────────
+    n_unique = len(groups)
+    n_reached = sum(1 for p in poses if p.get("reached", True))
+    stats = (f"Captured: {len(poses)}  |  Unique positions: {n_unique}  |  "
+             f"Reached: {n_reached}/{len(poses)}")
+    if args.transit:
+        n_transit = sum(len(v) for v in transit_edges.values())
+        stats += f"  |  Transit wpts: {n_transit}"
 
-    ax.set_xlabel("Pixels (1 px = 0.05m)")
+    ax.text(0.01, 0.01, stats, transform=ax.transAxes,
+            fontsize=9, va="bottom",
+            bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.85))
+
+    ax.set_xlabel("Pixels (1 px = 0.05 m)")
     ax.set_ylabel("Pixels")
     plt.tight_layout()
 
-    # ── Save or show ──
+    # ── Output ────────────────────────────────────────────────────────────────
     if args.save:
-        save_path = script_dir / args.save
+        save_path = PROJECT_ROOT / args.save
         plt.savefig(str(save_path), dpi=150, bbox_inches="tight")
         print(f"✅ Saved to: {save_path}")
     else:

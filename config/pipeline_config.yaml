@@ -13,12 +13,36 @@ models:
   ollama_host: "http://localhost:11434"
 
 graph:
-  pose_edge_threshold_m: 3.0   # connect nodes within this distance
+  pose_edge_threshold_m: 4.5   # connect nodes within this distance (4.0 = fully connected)
 
 search:
-  alpha: 0.0002                # distance penalty (from lm_nav pipeline.py)
-  clip_prompt: "A photo of "   # text prefix (from lm_nav optimal_route.py)
+  alpha: 0.00001               # distance penalty — near-zero so CLIP drives the decision
+  clip_prompt: "An indoor photo showing "   # more descriptive for indoor robot nav
 
 navigation:
   success_threshold_m: 0.5     # Nav2 goal tolerance
   frame_id: "map"
+
+# ── Robot spawn position (must match Gazebo launch / launch_sim.sh) ──
+robot:
+  spawn_x: -2.0
+  spawn_y: -0.5
+  spawn_theta: 0.0
+  radius_m: 0.30             # TurtleBot3 Waffle collision radius
+
+# ── Map files (relative to project root) ──
+map:
+  yaml_path: "aws-robomaker-small-house-world/maps/turtlebot3_waffle_pi/map.yaml"
+
+# ── Auto waypoint generation parameters ──
+waypoints:
+  min_clearance_m: 0.50        # Min distance-transform value at node (meters)
+  min_node_spacing_m: 1.20     # Min distance between any two positions (meters)
+  local_max_window_m: 0.80     # Suppression window for local maxima (meters)
+  capture_angles_deg: [0, 120, 240]  # Rotation offsets for multi-view capture
+  transit_spacing_m: 0.40      # Interval between transit subnodes (meters)
+
+# ── Depth gating (future: OWL-ViT integration) ──
+detection:
+  max_index_distance_m: 3.50   # Objects beyond this depth are not indexed
+  depth_fallback_patch_px: 5   # Patch size for invalid depth pixel handling
