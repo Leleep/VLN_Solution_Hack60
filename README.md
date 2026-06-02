@@ -1,5 +1,7 @@
 # LM-Nav: Vision-Language Navigation in Gazebo Simulation
 
+This project was developed for the CS-671 Hackathon by Group 21.
+
 A Vision-Language Navigation (VLN) pipeline that uses CLIP + LLM to navigate a TurtleBot3 robot through a simulated house based on natural language instructions.
 
 ## Architecture

@@ -340,7 +340,7 @@ class HouseExplorer(Node):
             "   (This may take 15-30 seconds after Gazebo launch)"
         )
         
-        max_attempts = 30  # try for up to 30 * 2 = 60 seconds
+        max_attempts = 30 
         amcl_ready = False
         
         for attempt in range(max_attempts):
@@ -694,9 +694,9 @@ def main():
 
     try:
         poses = explorer.run_exploration(waypoints)
-        print(f"\n✅ Exploration finished. {len(poses)} nodes captured.")
-        print(f"   Images: {output_dir}/node_*.png")
-        print(f"   Poses:  {output_dir}/poses.json")
+        print(f"\n✅ exploration finished. {len(poses)} nodes captured.")
+        print(f"   images: {output_dir}/node_*.png")
+        print(f"   poses:  {output_dir}/poses.json")
     except KeyboardInterrupt:
         print("\n🛑 Exploration cancelled by user.")
     finally:
